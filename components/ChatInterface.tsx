@@ -137,6 +137,14 @@ export default function ChatInterface() {
     }
   }
 
+  const updateMessageText = (id: string, updater: (prev: string) => string) => {
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === id ? { ...message, text: updater(message.text) } : message
+      )
+    )
+  }
+
   const handleSendMessage = async () => {
     if (!inputText.trim()) return
 
@@ -152,6 +160,17 @@ export default function ChatInterface() {
     setInputText('')
     setIsTyping(true)
 
+    const botMessageId = `${Date.now()}-bot`
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: botMessageId,
+        text: '',
+        sender: 'bot',
+        timestamp: new Date(),
+      },
+    ])
+
     try {
       // Send message to API
       const response = await fetch('/api/chat', {
@@ -162,43 +181,144 @@ export default function ChatInterface() {
         body: JSON.stringify({ message: messageText }),
       })
 
+      // Detect content type to support both SSE streaming and JSON responses
+      const contentType = response.headers.get('content-type') || ''
+
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'ارسال پیام با مشکل مواجه شد')
+        // Try to parse JSON error if available
+        let errorMessage = 'ارسال پیام با مشکل مواجه شد'
+        if (contentType.includes('application/json')) {
+          try {
+            const errorData = await response.json()
+            errorMessage = errorData.error || errorMessage
+          } catch {
+            // ignore
+          }
+        }
+        throw new Error(errorMessage)
       }
 
-      const data = await response.json()
+      // Non-streaming JSON response path
+      if (!contentType.includes('text/event-stream') || !response.body) {
+        try {
+          const data = await response.json()
+          const responseText =
+            data.text_response ||
+            data.response ||
+            data.message ||
+            data.answer ||
+            ''
 
-      // Extract response text (backend returns text_response)
-      const responseText = data.text_response || data.response || data.message || data.answer || 'متوجه شدم. چطور دیگه می‌تونم کمکتون کنم؟'
+          if (responseText && typeof responseText === 'string') {
+            updateMessageText(botMessageId, () => responseText)
+          } else {
+            updateMessageText(botMessageId, () => 'پاسخی دریافت نشد.')
+          }
+        } catch {
+          // Fallback to text
+          const text = await response.text()
+          updateMessageText(
+            botMessageId,
+            () => (text && text.trim() ? text : 'پاسخی دریافت نشد.')
+          )
+        }
+        return
+      }
+
+      // Streaming (SSE) path
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+      let hasContent = false
+      let chunkCount = 0
+      let dataLineCount = 0
+
+      console.log('=== STREAM START ===')
+
+      while (true) {
+        const { done, value } = await reader.read()
+        console.log('Read iteration - done:', done, 'value:', value ? `${value.length} bytes` : 'null')
+        if (done) break
+        if (value) {
+          chunkCount++
+          const chunk = decoder.decode(value, { stream: true })
+          console.log(`[CHUNK ${chunkCount}] Raw:`, JSON.stringify(chunk))
+          buffer += chunk
+          
+          // Split on double newline (SSE event boundary)
+          const events = buffer.split(/\n\n/)
+          buffer = events.pop() || ''
+          console.log(`[CHUNK ${chunkCount}] Split into ${events.length} events, buffer remainder:`, JSON.stringify(buffer))
+          
+          for (const event of events) {
+            if (!event.trim()) {
+              console.log('Skipping empty event')
+              continue
+            }
+            console.log('Processing event:', JSON.stringify(event))
+            const lines = event.split(/\n/)
+            console.log('Event has', lines.length, 'lines')
+            for (const line of lines) {
+              console.log('  Line:', JSON.stringify(line))
+              if (line.startsWith('data:')) {
+                dataLineCount++
+                const data = line.substring(5).trim()  // Extract and trim
+                console.log(`  [DATA LINE ${dataLineCount}] Extracted:`, JSON.stringify(data))
+                if (data && data !== '[DONE]') {
+                  hasContent = true
+                  console.log(`  [DATA LINE ${dataLineCount}] Adding to message:`, JSON.stringify(data))
+                  updateMessageText(botMessageId, (prevText) => prevText + data + ' ')
+                } else {
+                  console.log(`  [DATA LINE ${dataLineCount}] Skipped (empty or DONE)`)
+                }
+              } else {
+                console.log('  Line does NOT start with "data:"')
+              }
+            }
+          }
+        }
+      }
       
-      // Optionally include file_report if available
-      const fileReport = data.file_report
-      const displayText = fileReport 
-        ? `${responseText}\n\n📋 گزارش فایل:\n${fileReport}`
-        : responseText
+      console.log('=== STREAM ENDED ===')
+      console.log('Final buffer length:', buffer.length)
+      
+      // Process any remaining buffer
+      if (buffer.trim()) {
+        console.log('Processing final buffer:', JSON.stringify(buffer))
+        const lines = buffer.split(/\n/)
+        for (const line of lines) {
+          console.log('  Final line:', JSON.stringify(line))
+          if (line.startsWith('data:')) {
+            dataLineCount++
+            const data = line.substring(5).trim()
+            console.log(`  [FINAL DATA ${dataLineCount}] Extracted:`, JSON.stringify(data))
+            if (data && data !== '[DONE]') {
+              hasContent = true
+              updateMessageText(botMessageId, (prevText) => prevText + data + ' ')
+            }
+          }
+        }
+      }
 
-      // Add bot response
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          text: displayText,
-          sender: 'bot',
-          timestamp: new Date(),
-        },
-      ])
+      console.log('=== SUMMARY ===')
+      console.log('Total chunks received:', chunkCount)
+      console.log('Total data lines found:', dataLineCount)
+      console.log('hasContent final:', hasContent)
+      
+      if (!hasContent) {
+        console.error('NO CONTENT RECEIVED - showing error message')
+        updateMessageText(botMessageId, () => 'پاسخی دریافت نشد.')
+      }
     } catch (error: any) {
       console.error('Error sending message:', error)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          text: `خطا: ${error.message || 'ارسال پیام با مشکل مواجه شد. لطفاً بررسی کنید که بک‌اند روی 172.16.100.22:4000 در حال اجرا باشد.'}`,
-          sender: 'bot',
-          timestamp: new Date(),
-        },
-      ])
+      updateMessageText(
+        botMessageId,
+        () =>
+          `خطا: ${
+            error.message ||
+            'ارسال پیام با مشکل مواجه شد. لطفاً بررسی کنید که بک‌اند روی 172.16.100.22:4000 در حال اجرا باشد.'
+          }`
+      )
     } finally {
       setIsTyping(false)
     }

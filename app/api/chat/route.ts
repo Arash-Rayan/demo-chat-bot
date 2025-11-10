@@ -15,29 +15,58 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Prepare request body matching backend format
-    const requestBody: any = {
-      prompt: message,
-      username: USERNAME,
-      file_path: file_path || '', // Always include file_path, empty string if not provided
-    }
+    // Backend expects: { "prompt": "..." }
+    const requestBody = { prompt: message }
 
-    // Forward the message to the backend
-    const response = await fetch(`${BACKEND_URL}/process_request/`, {
+    const backendResponse = await fetch(`${BACKEND_URL}/process_request/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
       },
       body: JSON.stringify(requestBody),
     })
 
-    if (!response.ok) {
-      throw new Error(`Backend responded with status: ${response.status}`)
+    if (!backendResponse.ok || !backendResponse.body) {
+      throw new Error(
+        `Backend responded with status: ${backendResponse.status}`
+      )
     }
 
-    const data = await response.json()
+    const stream = new ReadableStream({
+      async start(controller) {
+        const reader = backendResponse.body!.getReader()
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) {
+              controller.close()
+              break
+            }
+            if (value) {
+              controller.enqueue(value)
+            }
+          }
+        } catch (error) {
+          controller.error(error)
+        } finally {
+          reader.releaseLock()
+        }
+      },
+      cancel() {
+        backendResponse.body?.cancel().catch(() => {
+          // Ignore cancel errors
+        })
+      },
+    })
 
-    return NextResponse.json(data)
+    return new NextResponse(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+      },
+    })
   } catch (error: any) {
     console.error('Error forwarding message to backend:', error)
     return NextResponse.json(
