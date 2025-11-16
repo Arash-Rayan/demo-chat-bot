@@ -4,7 +4,7 @@ import { join } from 'path'
 import mammoth from 'mammoth'
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://172.16.100.22:4000'
-const UPLOAD_DIR = process.env.UPLOAD_DIR || '/home/ubuntu2204/Desktop/arash/chat_bot_mobin/module/upload/guest'
+const UPLOAD_DIR = process.env.UPLOAD_DIR || join(process.cwd(), 'uploads', 'guest')
 const USERNAME = process.env.USERNAME || 'guest'
 
 export async function POST(request: NextRequest) {
@@ -74,7 +74,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Prepare file path for backend (remote system path)
-    const remoteFilePath = `/home/ubuntu2204/Desktop/arash/chat_bot_mobin/module/upload/guest/${file.name}`
+    // Note: This should match the actual backend upload directory
+    const remoteFilePath = process.env.REMOTE_FILE_PATH || `/home/ubuntu2204/Desktop/arash/chat_bot_mobin/module/upload/guest/${file.name}`
 
     // Send file text to backend with the expected format
     const backendResponse = await fetch(`${BACKEND_URL}/process_request/`, {

@@ -225,88 +225,42 @@ export default function ChatInterface() {
         return
       }
 
-      // Streaming (SSE) path
+      // Streaming path - handles both SSE format and raw text chunks
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
-      let buffer = ''
       let hasContent = false
-      let chunkCount = 0
-      let dataLineCount = 0
-
-      console.log('=== STREAM START ===')
 
       while (true) {
         const { done, value } = await reader.read()
-        console.log('Read iteration - done:', done, 'value:', value ? `${value.length} bytes` : 'null')
         if (done) break
+        
         if (value) {
-          chunkCount++
           const chunk = decoder.decode(value, { stream: true })
-          console.log(`[CHUNK ${chunkCount}] Raw:`, JSON.stringify(chunk))
-          buffer += chunk
           
-          // Split on double newline (SSE event boundary)
-          const events = buffer.split(/\n\n/)
-          buffer = events.pop() || ''
-          console.log(`[CHUNK ${chunkCount}] Split into ${events.length} events, buffer remainder:`, JSON.stringify(buffer))
-          
-          for (const event of events) {
-            if (!event.trim()) {
-              console.log('Skipping empty event')
-              continue
-            }
-            console.log('Processing event:', JSON.stringify(event))
-            const lines = event.split(/\n/)
-            console.log('Event has', lines.length, 'lines')
+          // Check if it's SSE format (starts with "data:") or raw text
+          if (chunk.includes('data:')) {
+            // SSE format - parse data: lines
+            const lines = chunk.split('\n')
             for (const line of lines) {
-              console.log('  Line:', JSON.stringify(line))
               if (line.startsWith('data:')) {
-                dataLineCount++
-                const data = line.substring(5).trim()  // Extract and trim
-                console.log(`  [DATA LINE ${dataLineCount}] Extracted:`, JSON.stringify(data))
+                const data = line.substring(5).trim()
                 if (data && data !== '[DONE]') {
                   hasContent = true
-                  console.log(`  [DATA LINE ${dataLineCount}] Adding to message:`, JSON.stringify(data))
-                  updateMessageText(botMessageId, (prevText) => prevText + data + ' ')
-                } else {
-                  console.log(`  [DATA LINE ${dataLineCount}] Skipped (empty or DONE)`)
+                  updateMessageText(botMessageId, (prevText) => prevText + data)
                 }
-              } else {
-                console.log('  Line does NOT start with "data:"')
               }
             }
-          }
-        }
-      }
-      
-      console.log('=== STREAM ENDED ===')
-      console.log('Final buffer length:', buffer.length)
-      
-      // Process any remaining buffer
-      if (buffer.trim()) {
-        console.log('Processing final buffer:', JSON.stringify(buffer))
-        const lines = buffer.split(/\n/)
-        for (const line of lines) {
-          console.log('  Final line:', JSON.stringify(line))
-          if (line.startsWith('data:')) {
-            dataLineCount++
-            const data = line.substring(5).trim()
-            console.log(`  [FINAL DATA ${dataLineCount}] Extracted:`, JSON.stringify(data))
-            if (data && data !== '[DONE]') {
+          } else {
+            // Raw text chunks (FastAPI streaming format)
+            if (chunk.trim()) {
               hasContent = true
-              updateMessageText(botMessageId, (prevText) => prevText + data + ' ')
+              updateMessageText(botMessageId, (prevText) => prevText + chunk)
             }
           }
         }
       }
-
-      console.log('=== SUMMARY ===')
-      console.log('Total chunks received:', chunkCount)
-      console.log('Total data lines found:', dataLineCount)
-      console.log('hasContent final:', hasContent)
       
       if (!hasContent) {
-        console.error('NO CONTENT RECEIVED - showing error message')
         updateMessageText(botMessageId, () => 'پاسخی دریافت نشد.')
       }
     } catch (error: any) {
