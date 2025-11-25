@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const BACKEND_URL = process.env.BACKEND_URL || 'http://172.16.100.22:4000'
+const BACKEND_URL = process.env.BACKEND_URL || 'http://172.16.100.22:80'
 const USERNAME = process.env.USERNAME || 'guest'
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { message, file_path } = body
+    const { message, role } = body
 
     if (!message) {
       return NextResponse.json(
@@ -15,14 +15,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Backend expects: { "prompt": "..." }
-    const requestBody = { prompt: message }
+    // Backend expects: { "prompt": "...", "role": "..." }
+    const requestBody = {
+      prompt: message,
+      role: role || undefined,
+    }
 
     const backendResponse = await fetch(`${BACKEND_URL}/process_request/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
+        Accept: 'text/event-stream, text/plain;q=0.9',
       },
       body: JSON.stringify(requestBody),
     })
@@ -60,9 +63,12 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    const backendContentType =
+      backendResponse.headers.get('content-type') || 'text/plain; charset=utf-8'
+
     return new NextResponse(stream, {
       headers: {
-        'Content-Type': 'text/event-stream',
+        'Content-Type': backendContentType,
         'Cache-Control': 'no-cache, no-transform',
         Connection: 'keep-alive',
       },

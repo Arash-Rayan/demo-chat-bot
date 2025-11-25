@@ -266,6 +266,70 @@
   cursor: not-allowed;
 }
 
+.roleModalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 1000;
+}
+
+.roleModal {
+  width: 100%;
+  max-width: 640px;
+  background: #ffffff;
+  border-radius: 24px;
+  padding: 2.5rem;
+  box-shadow: 0 20px 80px rgba(0, 0, 0, 0.15);
+  text-align: right;
+}
+
+.roleModal h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.5rem;
+  color: #1a1a1a;
+}
+
+.roleModal p {
+  margin: 0 0 1.5rem;
+  color: #555;
+  line-height: 1.6;
+}
+
+.roleOptions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.roleOptionButton {
+  padding: 1.125rem 1.25rem;
+  border-radius: 16px;
+  border: 1px solid #e5e5e5;
+  background: #fafafa;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: right;
+  transition: all 0.2s ease;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.roleOptionButton:hover {
+  border-color: #1a1a1a;
+  background: #ffffff;
+  transform: translateY(-2px);
+}
+
+.roleOptionLabel {
+  color: #1a1a1a;
+}
+
 @media (max-width: 768px) {
   .container {
     height: 100vh;

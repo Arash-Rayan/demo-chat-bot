@@ -3,14 +3,14 @@ import { writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import mammoth from 'mammoth'
 
-const BACKEND_URL = process.env.BACKEND_URL || 'http://172.16.100.22:4000'
+const BACKEND_URL = process.env.BACKEND_URL || 'http://172.16.100.22:80'
 const UPLOAD_DIR = process.env.UPLOAD_DIR || join(process.cwd(), 'uploads', 'guest')
-const USERNAME = process.env.USERNAME || 'guest'
 
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
     const file = formData.get('file') as File
+    const role = formData.get('role')?.toString().trim()
 
     if (!file) {
       return NextResponse.json(
@@ -73,38 +73,57 @@ export async function POST(request: NextRequest) {
       extractedText = `[File uploaded: ${file.name}. Could not extract text content.]`
     }
 
-    // Prepare file path for backend (remote system path)
-    // Note: This should match the actual backend upload directory
-    const remoteFilePath = process.env.REMOTE_FILE_PATH || `/home/ubuntu2204/Desktop/arash/chat_bot_mobin/module/upload/guest/${file.name}`
+    // Send file + prompt to backend using multipart form data
+    const backendForm = new FormData()
+    const promptText = formData.get('prompt')?.toString().trim()
+    const fallbackPrompt = `File uploaded: ${file.name}.`
+    const basePrompt = promptText || fallbackPrompt
+    const enrichedPrompt = role ? `[ROLE:${role}] ${basePrompt}` : basePrompt
+    backendForm.append('prompt', enrichedPrompt)
+    if (role) {
+      backendForm.append('role', role)
+    }
+    backendForm.append('file', file, file.name)
 
-    // Send file text to backend with the expected format
     const backendResponse = await fetch(`${BACKEND_URL}/process_request/`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        Accept: 'text/event-stream, text/plain;q=0.9',
       },
-      body: JSON.stringify({
-        prompt: extractedText || `لطفا این فایل من بررسی شود: ${file.name}`,
-        file_path: remoteFilePath,
-        username: USERNAME,
-      }),
+      body: backendForm,
     })
 
-    if (!backendResponse.ok) {
+    if (!backendResponse.ok || !backendResponse.body) {
       throw new Error(
         `Backend responded with status: ${backendResponse.status}`
       )
     }
 
-    const backendData = await backendResponse.json()
+    // Collect streaming response from backend into a single string
+    const reader = backendResponse.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let backendText = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) {
+        backendText += decoder.decode(value, { stream: true })
+      }
+    }
+    backendText += decoder.decode()
+
+    const extractedPreview = extractedText
+      ? `${extractedText.substring(0, 200)}...`
+      : ''
 
     return NextResponse.json({
       success: true,
       message: `File "${file.name}" uploaded and processed successfully`,
       filename: file.name,
       filepath: filePath,
-      extractedText: extractedText.substring(0, 200) + '...', // Preview
-      backendResponse: backendData,
+      extractedText: extractedPreview, // Preview
+      text_response: backendText || 'پاسخی دریافت نشد.',
     })
   } catch (error: any) {
     console.error('Error processing file upload:', error)

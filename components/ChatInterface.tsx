@@ -15,17 +15,54 @@ interface Message {
   }
 }
 
+interface RoleOption {
+  key: string
+  label: string
+}
+
+const DEFAULT_WELCOME =
+  'سلام! من MOBIN هستم. قبل از شروع لطفاً نقش خود را مشخص کنید.'
+
+const ROLE_OPTIONS: RoleOption[] = [
+  {
+    key: 'team_admin',
+    label: 'ادمین تیم',
+  },
+  {
+    key: 'team_member',
+    label: 'عضو تیم',
+  },
+  {
+    key: 'kashef_center',
+    label: 'کاشف مرکزی',
+  },
+  {
+    key: 'kashef_broker',
+    label: 'کارگزار کاشف',
+  },
+  {
+    key: 'rahbar',
+    label: 'راهبر',
+  },
+  {
+    key: 'public',
+    label: 'کاربر عادی',
+  },
+]
+
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
     {
-      id: '1',
-      text: 'سلام! من MOBIN هستم. چطور می‌تونم کمکتون کنم؟',
+      id: 'welcome',
+      text: DEFAULT_WELCOME,
       sender: 'bot',
       timestamp: new Date(),
     },
   ])
   const [inputText, setInputText] = useState('')
   const [isTyping, setIsTyping] = useState(false)
+  const [userRole, setUserRole] = useState<string | null>(null)
+  const [showRoleModal, setShowRoleModal] = useState(true)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -37,7 +74,97 @@ export default function ChatInterface() {
     scrollToBottom()
   }, [messages])
 
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch('/api/reset', {
+      method: 'POST',
+      signal: controller.signal,
+    }).catch((error) => {
+      console.error('Failed to reset chat history:', error)
+    })
+
+    return () => {
+      controller.abort()
+    }
+  }, [])
+
+  const getRoleLabel = (roleKey?: string | null) => {
+    if (!roleKey) return ''
+    return ROLE_OPTIONS.find((option) => option.key === roleKey)?.label || ''
+  }
+
+  const getWelcomeMessage = (roleKey?: string | null) => {
+    const label = getRoleLabel(roleKey)
+    if (!label) return DEFAULT_WELCOME
+    return `سلام ${label} محترم خوش آمدید، سوالی داشتید در خدمتم.`
+  }
+
+  const updateWelcomeMessage = (text: string) => {
+    setMessages((prev) => {
+      if (!prev.length) {
+        return [
+          {
+            id: 'welcome',
+            text,
+            sender: 'bot',
+            timestamp: new Date(),
+          },
+        ]
+      }
+      const [first, ...rest] = prev
+      if (first.sender !== 'bot') {
+        return [
+          {
+            id: 'welcome',
+            text,
+            sender: 'bot',
+            timestamp: new Date(),
+          },
+          ...prev,
+        ]
+      }
+      return [{ ...first, text, timestamp: new Date() }, ...rest]
+    })
+  }
+
+  const notifyBackendRole = async (roleKey: string, roleLabel: string) => {
+    try {
+      await fetch('/api/role', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ role: roleKey, label: roleLabel }),
+      })
+    } catch (error) {
+      console.error('Failed to sync role with backend:', error)
+    }
+  }
+
+  const handleRoleSelect = async (option: RoleOption) => {
+    setUserRole(option.key)
+    updateWelcomeMessage(getWelcomeMessage(option.key))
+    setShowRoleModal(false)
+    await notifyBackendRole(option.key, option.label)
+  }
+
+  const ensureRoleSelected = () => {
+    if (userRole) return true
+    setShowRoleModal(true)
+    return false
+  }
+
+  const interactionLocked = !userRole
+  const textPlaceholder = userRole
+    ? 'پیام خود را بنویسید...'
+    : 'برای شروع لطفاً نقش خود را انتخاب کنید.'
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!ensureRoleSelected()) {
+      e.target.value = ''
+      return
+    }
+
     const file = e.target.files?.[0]
     if (!file) return
 
@@ -88,6 +215,9 @@ export default function ChatInterface() {
       // Upload file to API
       const formData = new FormData()
       formData.append('file', file)
+      if (userRole) {
+        formData.append('role', userRole)
+      }
 
       const response = await fetch('/api/upload', {
         method: 'POST',
@@ -147,6 +277,7 @@ export default function ChatInterface() {
 
   const handleSendMessage = async () => {
     if (!inputText.trim()) return
+    if (!ensureRoleSelected()) return
 
     const messageText = inputText.trim()
     const newMessage: Message = {
@@ -178,16 +309,17 @@ export default function ChatInterface() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: messageText }),
+        body: JSON.stringify({ message: messageText, role: userRole }),
       })
 
-      // Detect content type to support both SSE streaming and JSON responses
       const contentType = response.headers.get('content-type') || ''
+      const isJsonResponse = contentType.includes('application/json')
+      const canStream = !!response.body && !isJsonResponse
 
       if (!response.ok) {
         // Try to parse JSON error if available
         let errorMessage = 'ارسال پیام با مشکل مواجه شد'
-        if (contentType.includes('application/json')) {
+        if (isJsonResponse) {
           try {
             const errorData = await response.json()
             errorMessage = errorData.error || errorMessage
@@ -199,7 +331,7 @@ export default function ChatInterface() {
       }
 
       // Non-streaming JSON response path
-      if (!contentType.includes('text/event-stream') || !response.body) {
+      if (!canStream) {
         try {
           const data = await response.json()
           const responseText =
@@ -225,7 +357,7 @@ export default function ChatInterface() {
         return
       }
 
-      // Streaming path - handles both SSE format and raw text chunks
+      // Streaming path - backend sends raw text chunks (FastAPI StreamingResponse)
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let hasContent = false
@@ -233,33 +365,23 @@ export default function ChatInterface() {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        
+
         if (value) {
           const chunk = decoder.decode(value, { stream: true })
-          
-          // Check if it's SSE format (starts with "data:") or raw text
-          if (chunk.includes('data:')) {
-            // SSE format - parse data: lines
-            const lines = chunk.split('\n')
-            for (const line of lines) {
-              if (line.startsWith('data:')) {
-                const data = line.substring(5).trim()
-                if (data && data !== '[DONE]') {
-                  hasContent = true
-                  updateMessageText(botMessageId, (prevText) => prevText + data)
-                }
-              }
-            }
-          } else {
-            // Raw text chunks (FastAPI streaming format)
-            if (chunk.trim()) {
-              hasContent = true
-              updateMessageText(botMessageId, (prevText) => prevText + chunk)
-            }
+          if (chunk) {
+            hasContent = true
+            updateMessageText(botMessageId, (prevText) => prevText + chunk)
           }
         }
       }
-      
+
+      // Flush any remaining decoded text
+      const remaining = decoder.decode()
+      if (remaining) {
+        hasContent = true
+        updateMessageText(botMessageId, (prevText) => prevText + remaining)
+      }
+
       if (!hasContent) {
         updateMessageText(botMessageId, () => 'پاسخی دریافت نشد.')
       }
@@ -352,13 +474,15 @@ export default function ChatInterface() {
             onChange={handleFileSelect}
             className={styles.fileInput}
             id="file-input"
+            disabled={interactionLocked}
           />
           <label htmlFor="file-input" className={styles.fileButton}>
             📎
           </label>
           <textarea
+            disabled={interactionLocked}
             className={styles.textInput}
-            placeholder="پیام خود را بنویسید..."
+            placeholder={textPlaceholder}
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyPress={handleKeyPress}
@@ -367,12 +491,32 @@ export default function ChatInterface() {
           <button
             className={styles.sendButton}
             onClick={handleSendMessage}
-            disabled={!inputText.trim()}
+            disabled={!inputText.trim() || interactionLocked}
           >
             →
           </button>
         </div>
       </div>
+
+      {showRoleModal && (
+        <div className={styles.roleModalOverlay}>
+          <div className={styles.roleModal}>
+            <h2>سلام به چت‌بات مبین خوش آمدید</h2>
+            <p>لطفاً نقش خود را از میان گزینه‌های زیر انتخاب کنید:</p>
+            <div className={styles.roleOptions}>
+              {ROLE_OPTIONS.map((option) => (
+                <button
+                  key={option.key}
+                  className={styles.roleOptionButton}
+                  onClick={() => handleRoleSelect(option)}
+                >
+                  <span className={styles.roleOptionLabel}>{option.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
