@@ -6,7 +6,7 @@ const USERNAME = process.env.USERNAME || 'guest'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { message, role } = body
+    const { message } = body
 
     if (!message) {
       return NextResponse.json(
@@ -15,10 +15,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Backend expects: { "prompt": "...", "role": "..." }
+    // Backend expects only: { "prompt": "..." }
+    // Role is set separately via /set_role/ endpoint
     const requestBody = {
       prompt: message,
-      role: role || undefined,
     }
 
     const backendResponse = await fetch(`${BACKEND_URL}/process_request/`, {

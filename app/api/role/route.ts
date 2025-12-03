@@ -1,22 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://172.16.100.22:80'
-const BACKEND_ROLE_ENDPOINT =
-  process.env.BACKEND_ROLE_ENDPOINT || '/role_selection/'
-
-const buildBackendUrl = () => {
-  const trimmedBase = BACKEND_URL.replace(/\/$/, '')
-  const normalizedPath = BACKEND_ROLE_ENDPOINT.startsWith('/')
-    ? BACKEND_ROLE_ENDPOINT
-    : `/${BACKEND_ROLE_ENDPOINT}`
-  return `${trimmedBase}${normalizedPath}`
-}
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const role = body?.role?.toString().trim()
-    const label = body?.label?.toString().trim()
+    const roles = body?.roles // Get the roles array from frontend
 
     if (!role) {
       return NextResponse.json(
@@ -25,14 +15,21 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const backendResponse = await fetch(buildBackendUrl(), {
+    if (!roles || !Array.isArray(roles)) {
+      return NextResponse.json(
+        { error: 'Roles array is required' },
+        { status: 400 }
+      )
+    }
+
+    const backendResponse = await fetch(`${BACKEND_URL}/set_role/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         role,
-        label,
+        roles, // Forward roles array to backend
       }),
     })
 
@@ -43,10 +40,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const data = await backendResponse.text()
+    const data = await backendResponse.json()
     return NextResponse.json({
       success: true,
-      backendResponse: data,
+      role: data.role,
     })
   } catch (error: any) {
     console.error('Error forwarding role to backend:', error)

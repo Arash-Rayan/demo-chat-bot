@@ -23,31 +23,39 @@ interface RoleOption {
 const DEFAULT_WELCOME =
   'سلام! من MOBIN هستم. قبل از شروع لطفاً نقش خود را مشخص کنید.'
 
+// All available roles and their Persian labels
 const ROLE_OPTIONS: RoleOption[] = [
-  {
-    key: 'team_admin',
-    label: 'ادمین تیم',
-  },
-  {
-    key: 'team_member',
-    label: 'عضو تیم',
-  },
-  {
-    key: 'kashef_center',
-    label: 'کاشف مرکزی',
-  },
-  {
-    key: 'kashef_broker',
-    label: 'کارگزار کاشف',
-  },
-  {
-    key: 'rahbar',
-    label: 'راهبر',
-  },
-  {
-    key: 'public',
-    label: 'کاربر عادی',
-  },
+  { key: 'GENERAL_ADMIN', label: 'مدیر کل' },
+  { key: 'CENTER_ADMIN', label: 'مدیر مرکز' },
+  { key: 'PLAN_PROGRAM', label: 'طرح و برنامه' },
+  { key: 'PLAN_PROGRAM_EXPERT', label: 'کارشناس طرح و برنامه' },
+  { key: 'FINANCIAL', label: 'مالی' },
+  { key: 'MANAGEMENT_REPORTS', label: 'گزارشات مدیریتی' },
+  { key: 'CENTRAL_KASHEF', label: 'کاشف مرکزی' },
+  { key: 'BROKER', label: 'کارگزار کاشف' },
+  { key: 'APPROVAL_COMMISSION', label: 'کمیسیون تصویب' },
+  { key: 'EVALUATOR', label: 'ارزیاب' },
+  { key: 'SUPERVISOR', label: 'ناظر' },
+  { key: 'BENEFICIARY', label: 'بهره‌بردار' },
+  { key: 'JOB_SEEKER', label: 'کارجو' },
+  { key: 'PARDIS_HEAD', label: 'مسئول پردیس' },
+  { key: 'PARDIS_EXPERT', label: 'کارشناس پردیس' },
+  { key: 'TEAM_LEADER', label: 'مسئول تیم' },
+  { key: 'TEAM_MEMBER', label: 'عضو تیم' },
+  { key: 'TEAM_FINDER', label: 'تیم‌یاب' },
+  { key: 'DEFENSE_EXPERT', label: 'کارشناس دفاع' },
+  { key: 'CENTER_EXPERT', label: 'کارشناس ارشد مرکز' },
+  { key: 'PUBLIC', label: 'کاربر عادی' },
+]
+
+// Available roles that can be selected (for now)
+const AVAILABLE_ROLES = [
+  'TEAM_LEADER',
+  'TEAM_MEMBER',
+  'CENTRAL_KASHEF',
+  'BROKER',
+  'PARDIS_HEAD',
+  'PUBLIC',
 ]
 
 export default function ChatInterface() {
@@ -127,25 +135,42 @@ export default function ChatInterface() {
     })
   }
 
-  const notifyBackendRole = async (roleKey: string, roleLabel: string) => {
+  const notifyBackendRole = async (roleKey: string) => {
     try {
-      await fetch('/api/role', {
+      console.log('Sending role to backend:', { role: roleKey, roles: AVAILABLE_ROLES })
+      const response = await fetch('/api/role', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ role: roleKey, label: roleLabel }),
+        body: JSON.stringify({ role: roleKey, roles: AVAILABLE_ROLES }),
       })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Role sync failed:', errorData)
+        throw new Error(errorData.error || 'Failed to sync role')
+      }
+      
+      const data = await response.json()
+      console.log('Role synced successfully:', data)
     } catch (error) {
       console.error('Failed to sync role with backend:', error)
     }
   }
 
   const handleRoleSelect = async (option: RoleOption) => {
+    const isAvailable = AVAILABLE_ROLES.includes(option.key)
+    if (!isAvailable) {
+      console.warn('Attempted to select disabled role:', option.key)
+      return
+    }
+    
+    console.log('Role selected:', option.key)
     setUserRole(option.key)
     updateWelcomeMessage(getWelcomeMessage(option.key))
     setShowRoleModal(false)
-    await notifyBackendRole(option.key, option.label)
+    await notifyBackendRole(option.key)
   }
 
   const ensureRoleSelected = () => {
@@ -213,11 +238,9 @@ export default function ChatInterface() {
 
     try {
       // Upload file to API
+      // Note: Role is set separately via /api/role endpoint
       const formData = new FormData()
       formData.append('file', file)
-      if (userRole) {
-        formData.append('role', userRole)
-      }
 
       const response = await fetch('/api/upload', {
         method: 'POST',
@@ -304,12 +327,13 @@ export default function ChatInterface() {
 
     try {
       // Send message to API
+      // Note: Role is set separately via /api/role endpoint, so we only send message
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: messageText, role: userRole }),
+        body: JSON.stringify({ message: messageText }),
       })
 
       const contentType = response.headers.get('content-type') || ''
@@ -504,15 +528,29 @@ export default function ChatInterface() {
             <h2>سلام به چت‌بات مبین خوش آمدید</h2>
             <p>لطفاً نقش خود را از میان گزینه‌های زیر انتخاب کنید:</p>
             <div className={styles.roleOptions}>
-              {ROLE_OPTIONS.map((option) => (
-                <button
-                  key={option.key}
-                  className={styles.roleOptionButton}
-                  onClick={() => handleRoleSelect(option)}
-                >
-                  <span className={styles.roleOptionLabel}>{option.label}</span>
-                </button>
-              ))}
+              {ROLE_OPTIONS.sort((a, b) => {
+                const aAvailable = AVAILABLE_ROLES.includes(a.key)
+                const bAvailable = AVAILABLE_ROLES.includes(b.key)
+                // Available roles first
+                if (aAvailable && !bAvailable) return -1
+                if (!aAvailable && bAvailable) return 1
+                // Then sort by label alphabetically
+                return a.label.localeCompare(b.label, 'fa')
+              }).map((option) => {
+                const isAvailable = AVAILABLE_ROLES.includes(option.key)
+                return (
+                  <button
+                    key={option.key}
+                    className={`${styles.roleOptionButton} ${
+                      !isAvailable ? styles.roleOptionButtonDisabled : ''
+                    }`}
+                    onClick={() => isAvailable && handleRoleSelect(option)}
+                    disabled={!isAvailable}
+                  >
+                    <span className={styles.roleOptionLabel}>{option.label}</span>
+                  </button>
+                )
+              })}
             </div>
           </div>
         </div>

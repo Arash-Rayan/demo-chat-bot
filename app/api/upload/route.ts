@@ -10,7 +10,6 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
     const file = formData.get('file') as File
-    const role = formData.get('role')?.toString().trim()
 
     if (!file) {
       return NextResponse.json(
@@ -74,15 +73,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Send file + prompt to backend using multipart form data
+    // Note: Role is set separately via /set_role/ endpoint, so we don't send it here
     const backendForm = new FormData()
     const promptText = formData.get('prompt')?.toString().trim()
     const fallbackPrompt = `File uploaded: ${file.name}.`
-    const basePrompt = promptText || fallbackPrompt
-    const enrichedPrompt = role ? `[ROLE:${role}] ${basePrompt}` : basePrompt
-    backendForm.append('prompt', enrichedPrompt)
-    if (role) {
-      backendForm.append('role', role)
-    }
+    backendForm.append('prompt', promptText || fallbackPrompt)
     backendForm.append('file', file, file.name)
 
     const backendResponse = await fetch(`${BACKEND_URL}/process_request/`, {

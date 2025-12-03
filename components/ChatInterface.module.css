@@ -320,10 +320,28 @@
   font-weight: 600;
 }
 
-.roleOptionButton:hover {
+.roleOptionButton:hover:not(:disabled) {
   border-color: #1a1a1a;
   background: #ffffff;
   transform: translateY(-2px);
+}
+
+.roleOptionButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #f5f5f5;
+}
+
+.roleOptionButtonDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #f5f5f5;
+}
+
+.roleOptionButtonDisabled:hover {
+  transform: none;
+  border-color: #e5e5e5;
+  background: #f5f5f5;
 }
 
 .roleOptionLabel {
